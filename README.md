@@ -99,9 +99,6 @@ Insightface
 ```Python
 아래와 같이 작성하면, 썸네일과 링크등록을 할 수 있습니다.
 [![영상 제목](유튜브 썸네일 URL)](유튜브 영상 URL)
-
-작성 예시 : 저는 다음과 같이 작성하니, 아래와 같이 링크가 연결된 썸네일 이미지가 등록되었네요! 
-[![한이음 드림업 프로젝트 소개](https://github.com/user-attachments/assets/16435f88-e7d3-4e45-a128-3d32648d2d84)](https://youtu.be/YcD3Lbn2FRI?si=isERqIAT9Aqvdqwp)
 ```
 [![아이로스 자율주행 로봇](https://img.youtube.com/vi/QY_Du2YTDjE/0.jpg)](https://youtu.be/QY_Du2YTDjE?si=FAy1_ID-kJWe4QAW)
 
