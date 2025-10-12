@@ -41,13 +41,6 @@
 4. 스마트홈·헬스케어·리테일 등 생활 분야까지 확장 가능한 AI 활용성 제공.
 
 **1-6. 기술 스택**
-- 프론트엔드 : React, Next.js, Tailwind CSS
-- 백엔드 : Python(FastAPI), Node.js, Django
-- AI/ML : PyTorch, TensorFlow, Hugging Face, OpenAI API
-- 데이터베이스 : PostgreSQL, MongoDB, Elasticsearch
-- 클라우드 : notion
-- 배포 및 관리 : GitHub Actions
-
 - AI / 머신러닝 
 프레임워크 : HailoRT SDK, DeGirum pySDK
 
