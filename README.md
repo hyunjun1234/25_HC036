@@ -1,29 +1,17 @@
 # AIROS
 
 # 📝[AIROS - [25_HC036]AI 기반 자율 순찰 및 침입자 감지 경비 로봇]
-- 링크 사용법
-- [Git & Github 기초사용법 알아보기](https://github.com/hanium-dreamup-challenge/git_guide/blob/main/README_git_guide.md)
----
-## **💡README 작성방법**
-- 프로젝트에서 사용되는 소스코드를 레포지토리에 업로드 한 후, 아래 가이드에 따라 README.md파일을 작성해주세요.
-- 필수 작성 항목(5가지) : 프로젝트 개요, 팀원 소개, 시스템 구성도, 작품 소개영상, 핵심 소스코드 
-- 프로젝트 저장소명 규칙 : `https://github.com/깃허브계정명/프로젝트 번호`
-- 예시) 깃허브 계정이 hanium이고, 프로젝트 번호가 25_HC001일 경우 -> `https://github.com/hanium/25_HC001`
-- 아래 항목 및 내용은 이해를 돕기위한 예시입니다. 참고만 하되 자유롭게 추가 및 작성해주시기 바랍니다.
-
----
 
 ## **💡1. 프로젝트 개요**
 
 **1-1. 프로젝트 소개**
 - 프로젝트 명 : AI 기반 자율 순찰 및 침입자 감지 경비 로봇
 - 프로젝트 정의 :  AI 기반 자율 순찰 및 안면 인식 구분을 활용한 침입자 감지 시스템
-  <img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/b25d0039-dfc8-4a6f-85c0-567a92e4039f" /></br>
+  <img width="618" height="379" alt="Image" src="https://github.com/user-attachments/assets/e646336e-9d91-4759-9311-3307caa1bacf" /></br>
 
 **1-2. 개발 배경 및 필요성**
 - 기존의 CCTV 및 경비 인력 중심 보안 시스템은 사각지대 발생, 높은 인건비 부담, 긴급 상황 시 실시간 대응의 어려움 등 여러 한계를 지니고 있습니다. 본 프로젝트는 이러한 문제를 해결하기 위해 ROS2 및 SLAM 기반 자율주행 기술과 AI 얼굴 인식(ArcFace+MFN) 기술을 융합한 무인 경비 로봇을 개발하고자 합니다. SCRFD 기반 허가자 DB를 통해 간편한 운용이 가능하며, 24시간 무인 감시로 인건비를 절감할 수 있습니다. 또한 장애물 회피 및 경로 재탐색 기능을 통해 자율적 대응이 가능하고, 사족보행 로봇 CANINE을 활용하여 거친 지형에서도 운용할 수 있습니다. 따라서 이러한 차세대 무인 보안 시스템이 필요합니다.
 
-- 
 
 **1-3. 프로젝트 특장점**
 - 기존 보안 제품(CCTV, 유인 경비 등)과 비교한 차별성
@@ -59,7 +47,6 @@
 - 데이터베이스 : PostgreSQL, MongoDB, Elasticsearch
 - 클라우드 : notion
 - 배포 및 관리 : GitHub Actions
-
 
 - AI / 머신러닝 
 프레임워크 : HailoRT SDK, DeGirum pySDK
