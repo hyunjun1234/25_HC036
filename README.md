@@ -1,7 +1,7 @@
 # AIROS
+테스트입니다. 
 
-
-# 📝[2025년 한이음 드림업 공모전 GitHub README 템플릿
+# 📝[2025년 한이음 드림업 공모전 GitHub README 템플릿]
 - 이 파일은 2025년 한이음 드림업 프로젝트를 수행하는 학생들에게 README 작성의 가이드라인을 제공하기 위해 제작되었습니다.
 - [Git & Github 기초사용법 알아보기](https://github.com/hanium-dreamup-challenge/git_guide/blob/main/README_git_guide.md)
 ---
