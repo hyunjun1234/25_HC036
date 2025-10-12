@@ -85,12 +85,13 @@ Insightface
 ## **💡3. 시스템 구성도**
 > **(참고)** S/W구성도, H/W구성도, 서비스 흐름도 등을 작성합니다. 시스템의 동작 과정 등을 추가할 수도 있습니다.
 - 서비스 구성도
-<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/28fc8453-d1a0-4184-8fd0-130d93d18545" />
+<img width="618" height="379" alt="Image" src="https://github.com/user-attachments/assets/e646336e-9d91-4759-9311-3307caa1bacf" /></br>
 
 
-- 엔티티 관계도
-<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/76e3347b-6d94-491e-8aeb-a7b4601c54d5" />
+- 알고리즘 흐름도
+<img width="555" height="358" alt="Image" src="https://github.com/user-attachments/assets/be35b0ce-0d9f-4e6f-acd9-4d12e415dc8f" /></br>
 
+<img width="581" height="329" alt="Image" src="https://github.com/user-attachments/assets/0d80736a-c8ab-4cfc-ac98-f00e3f794427" />
 
 ---
 ## **💡4. 작품 소개영상**
@@ -102,7 +103,8 @@ Insightface
 작성 예시 : 저는 다음과 같이 작성하니, 아래와 같이 링크가 연결된 썸네일 이미지가 등록되었네요! 
 [![한이음 드림업 프로젝트 소개](https://github.com/user-attachments/assets/16435f88-e7d3-4e45-a128-3d32648d2d84)](https://youtu.be/YcD3Lbn2FRI?si=isERqIAT9Aqvdqwp)
 ```
-[![한이음 드림업 프로젝트 소개](https://github.com/user-attachments/assets/16435f88-e7d3-4e45-a128-3d32648d2d84)](https://youtu.be/YcD3Lbn2FRI?si=isERqIAT9Aqvdqwp)
+[![아이로스 자율주행 로봇](https://img.youtube.com/vi/QY_Du2YTDjE/0.jpg)](https://youtu.be/QY_Du2YTDjE?si=FAy1_ID-kJWe4QAW)
+
 
 
 ---
