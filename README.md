@@ -103,396 +103,201 @@ Insightface
 - 소스코드 설명 : 비교 임베딩 추출 코드입니다.
 1. 얼굴 정렬 이미지(112×112) → ArcFace-MobileFaceNet 임베딩 추출
 2. 임베딩 → K-means 기반 대표 임베딩 추출 및 갤러리에 저장
+
+### Stage 1: Face Detection with Keypoint Detection
+
+목표: 얼굴 bbox + 5점 랜드마크를 얻어 이후 정렬(Alignment)에 사용합니다.
+아래는 SCRFD를 DeGirum @local로 로드하고, 한 프레임에서 검출·랜드마크를 꺼내는 최소 예시입니다.
+
 ```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Gallery DB builder with DeGirum SCRFD + ArcFace on Hailo-8L (@local).
-- Input: image files in --gallery (e.g., byeongchan_01.jpg, hyunjun_01.jpg ...)
-- Output: LanceDB at --db (table 'face' with 512-D vectors, cosine)
-"""
-import os, glob, uuid, argparse
-import numpy as np
-import cv2
-import lancedb
-from lancedb.pydantic import LanceModel, Vector
 import degirum as dg
 
-ARC_REF_5PTS = np.array([
-    [38.2946, 51.6963],
-    [73.5318, 51.5014],
-    [56.0252, 71.7366],
-    [41.5493, 92.3655],
-    [70.7299, 92.2041],
-], dtype=np.float32)
+# SCRFD 로드 (@local, 모델은 로컬 zoo 디렉토리 하위)
+det = dg.load_model(
+    model_name="scrfd_10g--640x640_quant_hailort_hailo8l_1",  # 예시
+    inference_host_address="@local",
+    zoo_url="/path/to/degirum/models_hailort",
+    token=""
+)
 
-class FaceRec(LanceModel):
-    id: str
-    vector: Vector(512)
-    entity_name: str
+# BGR 프레임 bgr 에 대해 추론
+out = det(bgr)  # numpy BGR 입력 가능
 
-def align112(img_bgr, kps5):
-    src = np.array(kps5, dtype=np.float32)
-    M, _ = cv2.estimateAffinePartial2D(src, ARC_REF_5PTS, ransacReprojThreshold=1000)
-    return cv2.warpAffine(img_bgr, M, (112, 112), borderValue=0)
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--zoo", required=True)
-    ap.add_argument("--det", required=True)
-    ap.add_argument("--rec", required=True)
-    ap.add_argument("--gallery", required=True)
-    ap.add_argument("--db", required=True)
-    ap.add_argument("--table", default="face")
-    args = ap.parse_args()
-
-    det = dg.load_model(args.det, "@local", args.zoo, "", overlay_color=(0,255,0))
-    rec = dg.load_model(args.rec, "@local", args.zoo, "")
-
-    db = lancedb.connect(args.db)
-    tbl = db.create_table(args.table, schema=FaceRec) if args.table not in db.table_names() else db.open_table(args.table)
-
-    exts = ("*.jpg","*.jpeg","*.png","*.bmp")
-    files=[]
-    for ex in exts:
-        files += glob.glob(os.path.join(args.gallery, ex))
-        files += glob.glob(os.path.join(args.gallery, "*", ex))
-
-    if not files:
-        print(f"[DB] no images under {args.gallery}")
-        return
-
-    added=0
-    for path in files:
-        base = os.path.basename(path)
-        label = base.split("_")[0].split(".")[0]
-        out = det(path)
-        faces = out.results
-        if len(faces) != 1:
-            print(f"[DB] skip {base} faces={len(faces)}"); continue
-        kps = [lm["landmark"] for lm in faces[0]["landmarks"]]
-        aligned = align112(out.image, kps)
-        emb = rec(aligned).results[0]["data"][0]
-        recrow = FaceRec(id=str(uuid.uuid4()), vector=np.asarray(emb, np.float32), entity_name=label)
-        tbl.add([recrow]); added += 1
-        print(f"[DB] add {label}: {base}")
-
-    print(f"[DB] added={added}, total={tbl.count_rows()}")
-
-if __name__ == "__main__":
-    main()
-
+# bbox & keypoints 수집
+boxes = []
+kps_list = []
+for face in out.results:
+    x1, y1, x2, y2 = map(int, face["bbox"])
+    w = max(0, x2 - x1)
+    h = max(0, y2 - y1)
+    if w < 80 or h < 80:  # 최소 크기 필터(예시)
+        continue
+    boxes.append((x1, y1, w, h))
+    kps_list.append([lm["landmark"] for lm in face["landmarks"]])  # 5점 랜드마크
 ```
 
 
+### Stage 2: Alignment (112×112 정렬)
 
-- 소스코드 설명 : rpi 카메라로 촬영한 실시간 얼굴과 db의 임베딩을 비교하여 안면 인식을 하는 코드입니다.
-1. 실시간 영상에서 얼굴 크롭 후 임베딩 추출
-2. 추출된 임베딩과 갤러리에 저장되어 있던 임베딩을 비교하기 위해 코사인 유사도 계산 → 3.임계값/마진/다수결/스무딩 적용
-3. 최종 ID 확정 또는 Unknown 처리 → 결과 OSD로 프레임에 합성
-4. 출력: 터미널에 주기적 로그 송출
+목표: 랜드마크를 ArcFace 기준 좌표에 맞춰 유사변환으로 정렬합니다.
+정렬 후 112×112 크기의 정규화된 얼굴 패치를 임베딩 모델에 입력합니다.
 
 ```python
-    #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-FIFO(YUV420) -> SCRFD(det + 5pts, DeGirum@local) -> ArcFace(112, DeGirum@local)
--> LanceDB cosine match -> OSD (+ Unknown dwell detection)
-- 터미널 A: ./cam_start.sh (FIFO 생성 및 카메라 캡쳐)  [예: /tmp/cam.yuv, 640x480@30]
-- 터미널 B: python3 fifo_scrfd_face_match_osd.py --zoo ... --fifo /tmp/cam.yuv ...
-"""
-import os, sys, time, argparse, signal
 import numpy as np
 import cv2
-import lancedb
-from collections import deque, Counter
-import degirum as dg
 
-# ---------- 기본값 ----------
+# ArcFace 기준 5점(112×112 기준)
 ARC_REF_5PTS = np.array([
     [38.2946, 51.6963],
     [73.5318, 51.5014],
     [56.0252, 71.7366],
     [41.5493, 92.3655],
-    [70.7299, 92.2041],
+    [70.7299, 92.2041]
 ], dtype=np.float32)
-
-def read_exact(f, n):
-    buf = bytearray(n); mv = memoryview(buf); off = 0
-    while off < n:
-        r = f.readinto(mv[off:])
-        if not r: return None
-        off += r
-    return buf
 
 def align112(img_bgr, kps5):
     src = np.array(kps5, dtype=np.float32)
-    M, _ = cv2.estimateAffinePartial2D(src, ARC_REF_5PTS, ransacReprojThreshold=1000)
-    return cv2.warpAffine(img_bgr, M, (112, 112), borderValue=0)
+    M, _ = cv2.estimateAffinePartial2D(
+        src,
+        ARC_REF_5PTS,
+        ransacReprojThreshold=1000
+    )
+    aligned = cv2.warpAffine(
+        img_bgr,
+        M,
+        (112, 112),
+        borderValue=0
+    )
+    return aligned
 
+```
+
+### Stage 3: Extracting Embeddings (ArcFace MobileFaceNet)
+
+목표: 정렬된 얼굴로부터 512-D 임베딩을 추출합니다. 배치 추론을 통해 성능을 높입니다.
+```python
+import degirum as dg
+import numpy as np
+
+# ArcFace-MobileFaceNet 로드 (@local)
+rec = dg.load_model(
+    model_name="arcface_mobilefacenet--112x112_quant_hailort_hailo8l_1",
+    inference_host_address="@local",
+    zoo_url="/path/to/degirum/models_hailort",
+    token=""
+)
+
+# 배치 정렬
+aligned_list = [align112(bgr, kps) for kps in kps_list]
+
+# 배치 임베딩 추출
+embeddings = []
+for emb_res in rec.predict_batch(aligned_list):
+    emb = emb_res.results[0]["data"][0]  # 512-D
+    embeddings.append(emb)
+
+# (선택) L2 정규화 → 코사인 유사도에 적합
 def l2_normalize(x, eps=1e-9):
     n = np.linalg.norm(x, axis=-1, keepdims=True)
     return x / np.maximum(n, eps)
 
-# ----- LanceDB -----
-def open_table(db_uri, table="face"):
-    db = lancedb.connect(db_uri)
-    return db.open_table(table)
+embeddings = [l2_normalize(np.asarray(e, np.float32)) for e in embeddings]
+```
 
-class TrackSmoother:
-    def __init__(self, thresh=0.45, smooth=7):
-        self.hist = deque(maxlen=max(1,int(smooth)))
-        self.thresh = float(thresh)
-    def update(self, name, sim):
-        self.hist.append((name, float(sim)))
-        cnt = Counter([n for n,_ in self.hist]).most_common(1)[0]
-        mode = cnt[0]
-        avg = float(np.mean([s for n,s in self.hist if n==mode]))
-        return (mode if avg>=self.thresh else "unknown"), avg
+### Stage 4: Database Matching (LanceDB, Cosine)
+목표: 임베딩을 LanceDB에 질의하여 가장 가까운 인물(라벨)을 반환합니다.
+테이블은 vector(512)와 entity_name 컬럼을 가지는 것으로 가정합니다.
 
-class SimpleTracker:
-    def __init__(self, dist_th=80, max_miss=15):
-        self.next_id = 0
-        self.tr = {}  # id -> dict(x,y,w,h,miss,sm,label,avg,last_seen)
-        self.dist_th = dist_th; self.max_miss = max_miss
-    @staticmethod
-    def _c(b): return (b[0]+b[2]/2.0, b[1]+b[3]/2.0)
-    def update(self, boxes):
-        for t in self.tr.values(): t["miss"] += 1
-        used = set()
-        for b in boxes:
-            cx, cy = self._c(b)
-            j=None; best=1e9
-            for tid,t in self.tr.items():
-                tx, ty = self._c((t["x"],t["y"],t["w"],t["h"]))
-                d = (tx-cx)**2 + (ty-cy)**2
-                if d<best and tid not in used:
-                    j, best = tid, d
-            if j is not None and best**0.5 < self.dist_th:
-                t = self.tr[j]; t.update({"x":int(b[0]),"y":int(b[1]),"w":int(b[2]),"h":int(b[3]),"miss":0})
-                used.add(j)
-            else:
-                tid=self.next_id; self.next_id+=1
-                self.tr[tid]={"x":int(b[0]),"y":int(b[1]),"w":int(b[2]),"h":int(b[3]),
-                              "miss":0,"sm":None,"label":"unknown","avg":0.0,"last_seen":time.time()}
-        # drop
-        for tid in [k for k,v in self.tr.items() if v["miss"]>self.max_miss]:
-            del self.tr[tid]
-        return self.tr
+코사인 유사도에서 1 - distance로 유사도를 계산합니다.
+thresh를 적절히 잡아 Unknown 판정을 제어할 수 있습니다.
+```python
+import lancedb
+import numpy as np
 
-# ─────────────────────────────
-# 워밍업 (기존 성능 최적화 유지)
-# ─────────────────────────────
-def warmup(det, rec, w, h, n=5):
-    dummy = np.zeros((h, w, 3), np.uint8)
-    for _ in range(n):
-        out = det(dummy)
-        if out.results:
-            kps = [lm["landmark"] for lm in out.results[0]["landmarks"]]
-            aligned = align112(dummy, kps)
-        else:
-            aligned = cv2.resize(dummy, (112,112))
-        _ = rec(aligned)
+# DB 접속 및 테이블 열기
+db = lancedb.connect(uri="/path/to/face_database")
+tbl = db.open_table("face")  # 스키마: id, vector(512), entity_name
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--zoo", required=True, help="DeGirum local zoo folder (parent of model packages)")
-    ap.add_argument("--det", required=True, help="SCRFD model folder name")
-    ap.add_argument("--rec", required=True, help="ArcFace-MobileFaceNet model folder name")
-    ap.add_argument("--fifo", default="/tmp/cam.yuv")
-    ap.add_argument("--w", type=int, default=640)
-    ap.add_argument("--h", type=int, default=480)
-    ap.add_argument("--db", required=True)
-    ap.add_argument("--table", default="face")
-    ap.add_argument("--thresh", type=float, default=0.40)
-    ap.add_argument("--smooth", type=int, default=7)
-    ap.add_argument("--det-every", type=int, default=1)
-    ap.add_argument("--min-face", type=int, default=80)
-    ap.add_argument("--flip", type=int, default=None, help="-1(180),0(상하),1(좌우)")
-    # [ADDED] 외부인 체류 감지 옵션
-    ap.add_argument("--margin", type=int, default=40, help="pixels from border regarded as edge zone")               # [ADDED]
-    ap.add_argument("--unknown-time", type=float, default=3.0, help="seconds for unknown dwell to trigger alert")    # [ADDED]
-    ap.add_argument("--reset-time", type=float, default=2.0, help="seconds after no unknown-in-margin to reset")     # [ADDED]
-    args = ap.parse_args()
+def identify_one(embedding, tbl, field="vector", metric="cosine", thresh=0.40):
+    res = (tbl.search(np.asarray(embedding, np.float32), vector_column_name=field)
+             .metric(metric)
+             .limit(1)
+             .to_list())
+    if not res:
+        return "Unknown", 0.0
+    sim = float(1.0 - res[0]["_distance"])  # cosine similarity
+    name = res[0]["entity_name"] if sim >= thresh else "Unknown"
+    return name, sim
 
-    # DeGirum models (@local)
-    det = dg.load_model(args.det, "@local", args.zoo, "", overlay_color=(0,255,0))
-    rec = dg.load_model(args.rec, "@local", args.zoo, "")
+# 예: 배치 결과 매칭
+labels, sims = [], []
+for q in embeddings:
+    name, sim = identify_one(q, tbl, field="vector", metric="cosine", thresh=0.40)
+    labels.append(name)
+    sims.append(sim)
+```
 
-    # DB
-    tbl = open_table(args.db, args.table)
+### Running on a Video Stream (FIFO + Tracker + Unknown Dwell Alert)
 
-    # 워밍업
-    warmup(det, rec, args.w, args.h, n=5)
+목표: 실시간 YUV420(FIFO) 스트림에서 검출·정렬·임베딩·매칭을 수행하고,
+간단한 트래킹/스무딩과 Unknown 체류 경보(value=1) 를 구현합니다.
 
-    # FIFO
-    frame_size = args.w * args.h * 3 // 2  # YUV420
-    print(f"[FIFO] open {args.fifo} ({args.w}x{args.h})")
-    f = open(args.fifo, "rb", buffering=0)
+화면에 미리 정한 감시 구역(ALERT_ROI, 사각형) 안에 unknown 트랙이 3초 이상 머물면 value = 1이 됩니다.
+트래커가 사람마다 고유 track id를 유지하므로, 허가자(라벨 있음)와 비허가자(unknown)를 동시에 추적해도 충돌 없이 동작합니다.
+허가자 임베딩을 DB에 저장해 두면, 매 프레임 얼굴 인식 → 라벨 부여 → 트래킹 연계가 이루어져 unknown만 정확히 감지합니다.
 
-    # 초기 프레임 드롭(버퍼 안정)
-    DROP_N = 10
-    for _ in range(DROP_N):
-        raw = read_exact(f, frame_size)
-        if raw is None: break
+```python
+# 사전 정의: 경보 영역(예: 화면 중앙 320x240)
+ALERT_ROI = (W//2 - 160, H//2 - 120, 320, 240)  # (x, y, w, h)
+UNKNOWN_DWELL_SEC = 3.0
 
-    tracker = SimpleTracker(dist_th=90, max_miss=12)
+# 상태값
+alert_active = False         # value == 1 이면 True
+unknown_timer = {}           # {tid: {"start": float or None, "last": float}}
+last_unknown_inside_ts = 0.0
+RESET_SEC = 2.0
 
-    # 슬라이딩 윈도우 FPS
-    times = deque(maxlen=120)
-    disp_fps = 0.0
-    frames = 0
+def inside_roi(box, roi):
+    x, y, w, h = box
+    rx, ry, rw, rh = roi
+    # 중심점이 ROI 안이면 inside로 간주
+    cx, cy = x + w/2.0, y + h/2.0
+    return (rx <= cx <= rx+rw) and (ry <= cy <= ry+rh)
 
-    # [ADDED] 외부인(unknown) 체류 감지 상태
-    unknown_timer = {}   # tid -> {"start":float or None, "last":float}                              # [ADDED]
-    alert_active = False                                                                     # [ADDED]
-    last_unknown_in_margin_time = 0.0                                                        # [ADDED]
+# 매 프레임마다 실행 (tracks는 SimpleTracker 결과, 각 t에 bbox/label/avg 포함)
+now = time.time()
+any_unknown_inside = False
 
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
+for tid, t in tracks.items():
+    # t["label"]은 DB 매칭+스무딩 결과 ("unknown" 또는 사람 이름)
+    is_unknown = (t["label"] == "unknown")
+    in_roi = inside_roi((t["x"], t["y"], t["w"], t["h"]), ALERT_ROI)
 
-    while True:
-        raw = read_exact(f, frame_size)
-        if raw is None: break
-        yuv = np.frombuffer(raw, dtype=np.uint8).reshape(args.h*3//2, args.w)
-        bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_I420)
-        if args.flip is not None:
-            bgr = cv2.flip(bgr, args.flip)
+    if is_unknown and in_roi:
+        any_unknown_inside = True
+        timer = unknown_timer.get(tid, {"start": None, "last": now})
+        if timer["start"] is None:
+            timer["start"] = now
+        timer["last"] = now
+        unknown_timer[tid] = timer
 
-        # ── SCRFD 검출 ────────────────────────────────────────────────────────
-        boxes=[]; kps_list=[]
-        if frames % max(1,args.det_every) == 0:
-            out = det(bgr)  # numpy BGR 입력 OK
-            for face in out.results:
-                (x1,y1,x2,y2) = map(int, face["bbox"])
-                w = max(0, x2-x1); h = max(0, y2-y1)
-                if w < args.min_face or h < args.min_face: continue
-                boxes.append((x1,y1,w,h))
-                kps_list.append([lm["landmark"] for lm in face["landmarks"]])
-        # ─────────────────────────────────────────────────────────────────────
+        dwell = now - timer["start"]
+        if dwell >= UNKNOWN_DWELL_SEC:
+            alert_active = True  # ← 여기서 value = 1이 됩니다.
+    else:
+        # ROI 밖이거나 라벨이 바뀐 경우에도 last만 갱신해 흔적 유지
+        if tid in unknown_timer:
+            unknown_timer[tid]["last"] = now
 
-        # ── 배치 정합 + 배치 임베딩 + 매칭 ─────────────────────────────────────
-        box_labels, box_sims = [], []
-        if boxes:
-            aligned_list = [align112(bgr, kps) for kps in kps_list]
-            embeddings = []
-            for emb_res in rec.predict_batch(aligned_list):
-                embeddings.append(emb_res.results[0]["data"][0])
-            for q in embeddings:
-                res = (tbl.search(np.asarray(q, np.float32), vector_column_name="vector")
-                         .metric("cosine").limit(1).to_list())
-                if res:
-                    sim = float(1.0 - res[0]["_distance"])
-                    name = res[0]["entity_name"]
-                else:
-                    sim, name = 0.0, "unknown"
-                box_labels.append(name); box_sims.append(sim)
-        # ─────────────────────────────────────────────────────────────────────
+# reset 로직(ROI 안에 unknown이 더 이상 없으면 일정 시간 뒤 해제)
+if any_unknown_inside:
+    last_unknown_inside_ts = now
+else:
+    if alert_active and (now - last_unknown_inside_ts) >= RESET_SEC:
+        alert_active = False
+        unknown_timer.clear()
 
-        # ── 트래커 업데이트 ───────────────────────────────────────────────────
-        tracks = tracker.update(boxes)
-
-        # 박스 ↔ 트랙 매칭(가장 가까운 중심 매칭)
-        def nearest_box_index_to_track(tr, boxes_list):
-            if not boxes_list: return None
-            cx = tr["x"] + tr["w"]/2.0; cy = tr["y"] + tr["h"]/2.0
-            j=None; best=1e18
-            for i,(x,y,w,h) in enumerate(boxes_list):
-                bx = x + w/2.0; by = y + h/2.0
-                d = (bx-cx)**2 + (by-cy)**2
-                if d < best: best = d; j = i
-            return j
-
-        now = time.time()  # [ADDED] 체류 시간 판정용
-        any_unknown_in_margin = False  # [ADDED]
-
-        for tid,t in tracks.items():
-            if t["sm"] is None: t["sm"] = TrackSmoother(args.thresh, args.smooth)
-
-            idx = nearest_box_index_to_track(t, boxes)
-            if idx is not None and idx < len(box_labels):
-                name = box_labels[idx]; sim = box_sims[idx]
-            else:
-                name = "unknown"; sim = 0.0
-
-            label, avg = t["sm"].update(name, sim)
-            t["label"], t["avg"], t["last_seen"] = label, avg, time.time()
-
-            # [ADDED] ─────────────────────────────────────────────────────────
-            # 외부인(unknown) 체류 감지: 프레임 경계 margin 내에 unknown이 일정 시간 이상 머무르면 alert
-            x,y,w,h = t["x"], t["y"], t["w"], t["h"]
-            in_margin = (x <= args.margin or y <= args.margin or
-                         (x+w) >= (args.w - args.margin) or
-                         (y+h) >= (args.h - args.margin))
-            is_unknown = (t["label"] == "unknown")
-
-            if is_unknown and in_margin:
-                any_unknown_in_margin = True
-                timer = unknown_timer.get(tid, {"start": None, "last": now})
-                if timer["start"] is None:
-                    timer["start"] = now
-                timer["last"] = now
-                unknown_timer[tid] = timer
-                dwell = now - timer["start"]
-                if dwell >= args.unknown_time:
-                    alert_active = True
-            else:
-                # margin 밖이거나 라벨이 바뀐 경우: 타이머 유지하되 last만 갱신
-                if tid in unknown_timer:
-                    unknown_timer[tid]["last"] = now
-            # ─────────────────────────────────────────────────────────────────
-
-        # [ADDED] alert reset 로직
-        if any_unknown_in_margin:
-            last_unknown_in_margin_time = now
-        else:
-            if alert_active and (now - last_unknown_in_margin_time) >= args.reset_time:
-                alert_active = False
-                unknown_timer.clear()
-
-        # ── OSD & FPS ────────────────────────────────────────────────────────
-        frames += 1
-        pnow = time.perf_counter()
-        times.append(pnow)
-        while times and pnow - times[0] > 1.0:
-            times.popleft()
-        if len(times) >= 2:
-            disp_fps = (len(times)-1) / (times[-1] - times[0])
-
-        canvas = bgr
-
-        # [ADDED] margin 가이드 라인
-        if args.margin > 0:
-            cv2.rectangle(canvas, (args.margin, args.margin), (args.w-args.margin, args.h-args.margin),
-                          (50,50,50), 1, cv2.LINE_AA)
-
-        for tid,t in tracks.items():
-            x,y,w,h = t["x"],t["y"],t["w"],t["h"]
-            color = (0,255,0) if t["label"]!="unknown" else (0,0,255)
-            cv2.rectangle(canvas, (x,y), (x+w,y+h), color, 2)
-            cv2.putText(canvas, f"ID{tid}:{t['label']} {t['avg']:.2f}",
-                        (x, max(18,y-6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
-
-            # [ADDED] unknown dwell 시간 OSD
-            if tid in unknown_timer and t["label"]=="unknown":
-                dwell = now - (unknown_timer[tid]["start"] or now)
-                cv2.putText(canvas, f"dwell {dwell:.1f}s",
-                            (x, y+h+18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,0,255), 2, cv2.LINE_AA)
-
-        # 헤더 바
-        cv2.rectangle(canvas, (10,10), (args.w-10, 55), (0,0,0), -1)
-        head = f"{args.w}x{args.h} FPS~{disp_fps:.1f}"
-        # [ADDED] alert state 출력
-        head2 = f"  |  value={1 if alert_active else 0}  (unk>= {args.unknown_time:.1f}s in margin, reset {args.reset_time:.1f}s)"
-        cv2.putText(canvas, head + head2, (18, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                    (0,255,255) if not alert_active else (0,128,255), 2, cv2.LINE_AA)
-
-        cv2.imshow("LIVE (FIFO + SCRFD + ArcFace)", canvas)
-        if cv2.waitKey(1) & 0xFF == 27: break
-
-    f.close()
-    cv2.destroyAllWindows()
-
-if __name__ == "__main__":
-    main()
-
+# 외부 연동을 위한 상태 출력/사용
+value = 1 if alert_active else 0
+# 예) if value == 1: send_kakao_alert(...)
 ```
