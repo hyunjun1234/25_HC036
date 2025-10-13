@@ -70,7 +70,7 @@ Insightface
 | <img width="80" height="100" src="https://github.com/user-attachments/assets/ab73bb1c-c1d4-464d-8ad3-635b45d5a8ae" > | <img width="80" height="100" alt="image" src="https://github.com/user-attachments/assets/74897ec8-90c3-459c-be7b-ffe76398d7ba" > | <img width="80" height="100" alt="image" src="https://github.com/user-attachments/assets/c33252c7-3bf6-43cf-beaa-a9e2d9bd090b" > | <img width="80" height="100" alt="image" src="https://github.com/user-attachments/assets/0d5909f0-fc73-4ab9-be09-4d48e3e71083" > | <img width="80" height="100" alt="image" src="https://github.com/user-attachments/assets/c7f66b7c-ab84-41fa-8fba-b49dba28b677" > |
 |:---:|:---:|:---:|:---:|:---:|
 | **조현준** | **양병찬** | **김태훈** | **강신재** | **권용인** |
-| • 개발총괄 <br> • 안면 구분 시스템 개발 | • 안면 구분 시스템 개발 • 후처리 | • 자율주행 시스템 개발 |• MQTT 개발 <br> • 서버 구축 | • 프로젝트 멘토 <br> • 기술 자문 |
+| • 개발총괄 <br> • 안면 구분 시스템 개발 | • 안면 구분 시스템 개발 <br>• 후처리 | • 자율주행 시스템 개발 |• MQTT 개발 <br> • 서버 구축 | • 프로젝트 멘토 <br> • 기술 자문 |
 
 
 
