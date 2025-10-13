@@ -301,3 +301,91 @@ else:
 value = 1 if alert_active else 0
 # 예) if value == 1: send_kakao_alert(...)
 ```
+
+
+
+
+
+- 소스코드 설명 :SLAM으로 /map 생성 → Nav2로 전역/지역 경로계획 → Waypoint Follower로 순차 주행 및 장애물 회피를 구현한 자율주행 코드입니다.
+
+### Nav2 컴포저블 컨테이너 (Nav2 핵심 서버 호스팅)
+
+역할 : Nav2의 서버들(플래너, 컨트롤러, BT 등)을 하나의 컨테이너에서 구동합니다.
+
+```xml
+<!-- [2] 컴포저블 컨테이너 -->
+<node
+  pkg="rclcpp_components"
+  exec="component_container_isolated"
+  name="$(var container_name)"
+  output="screen"
+  args="--ros-args --log-level $(var log_level)"
+  if="$(var use_composition)"
+>
+  <param from="$(var params_file)"/>
+  <param name="autostart" value="$(var autostart)"/>
+  <param name="use_sim_time" value="$(var use_sim_time)"/>
+  <remap from="/tf" to="tf"/>
+  <remap from="/tf_static" to="tf_static"/>
+</node>
+```
+
+### SLAM 실행 (Cartographer 노드 기동)
+
+역할: LiDAR /scan을 받아 /map 프레임을 생성합니다.
+
+```xml
+<!-- [3] Cartographer SLAM -->
+<arg name="cartographer_prefix" default="$(find-pkg-share pinky_cartographer)"/>
+<arg name="cartographer_config_dir" default="$(var cartographer_prefix)/params"/>
+<arg name="configuration_basename" default="nav2_cartographer_params.lua"/>
+<arg name="lidar_topic" default="/scan"/>
+
+<node
+  pkg="cartographer_ros"
+  exec="cartographer_node"
+  name="cartographer_node"
+  output="screen"
+  args="-configuration_directory $(var cartographer_config_dir) -configuration_basename $(var configuration_basename)"
+>
+  <param name="use_sim_time" value="$(var use_sim_time)"/>
+  <remap from="/scan" to="$(var lidar_topic)"/>
+</node>
+```
+
+### 점유격자 맵 퍼블리시 (OccupancyGrid)
+
+역할: SLAM 결과를 /map의 OccupancyGrid로 주기 퍼블리시합니다.
+
+```xml
+<!-- [4] Occupancy Grid 퍼블리시 -->
+<arg name="occ_res" default="0.05"/>
+<arg name="occ_period" default="1.0"/>
+
+<node
+  pkg="cartographer_ros"
+  exec="cartographer_occupancy_grid_node"
+  name="cartographer_occupancy_grid_node"
+  output="screen"
+  args="-resolution $(var occ_res) -publish_period_sec $(var occ_period)"
+>
+  <param name="use_sim_time" value="$(var use_sim_time)"/>
+</node>
+```
+
+### Nav2 전체 포함 (웨이포인트 포함)
+
+역할: 전역·지역 플래너, BT, 웨이포인트 팔로워 등을 한 번에 기동합니다.
+
+```xml
+<!-- [5] Nav2(웨이포인트 포함) 런치 포함 -->
+<include file="$(find-pkg-share pinky_navigation)/launch/navigation_launch.xml">
+  <arg name="params_file" value="$(var params_file)"/>
+  <arg name="use_sim_time" value="$(var use_sim_time)"/>
+  <arg name="autostart" value="$(var autostart)"/>
+  <arg name="use_composition" value="$(var use_composition)"/>
+  <arg name="use_respawn" value="$(var use_respawn)"/>
+  <arg name="container_name" value="$(var container_name)"/>
+  <arg name="lifecycle_nodes" value="$(var lifecycle_nodes_nav)"/>
+</include>
+```
