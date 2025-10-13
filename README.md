@@ -304,7 +304,7 @@ value = 1 if alert_active else 0
 
 
 
-
+---
 
 - 소스코드 설명 :SLAM으로 /map 생성 → Nav2로 전역/지역 경로계획 → Waypoint Follower로 순차 주행 및 장애물 회피를 구현한 자율주행 코드입니다.
 
@@ -389,3 +389,5 @@ value = 1 if alert_active else 0
   <arg name="lifecycle_nodes" value="$(var lifecycle_nodes_nav)"/>
 </include>
 ```
+
+
