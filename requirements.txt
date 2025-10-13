@@ -1,0 +1,10 @@
+notebook
+ipykernel
+degirum
+degirum_tools
+degirum_cli
+lancedb 
+pydantic 
+numpy 
+opencv-python 
+matplotlib
