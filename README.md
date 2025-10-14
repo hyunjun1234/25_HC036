@@ -88,12 +88,8 @@ Insightface
 
 ---
 ## **💡4. 작품 소개영상**
-> **참고**: 썸네일과 유튜브 영상을 등록하는 방법입니다.
-```Python
-아래와 같이 작성하면, 썸네일과 링크등록을 할 수 있습니다.
-[![영상 제목](유튜브 썸네일 URL)](유튜브 영상 URL)
-```
-[![아이로스 자율주행 로봇](https://img.youtube.com/vi/QY_Du2YTDjE/0.jpg)](https://youtu.be/QY_Du2YTDjE?si=FAy1_ID-kJWe4QAW)
+
+[![AI 기반 자율 순찰 및 침입자 감지 경비 로봇](https://github.com/user-attachments/assets/4cb84602-90a7-48f5-a27f-40256d9be833)](https://youtu.be/HwIvVmLQAVw)
 
 
 
