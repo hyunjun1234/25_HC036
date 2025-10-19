@@ -17,7 +17,8 @@ python3 fifo_scrfd_face_match_osd.py \
   --rec arcface_mobilefacenet--112x112_quant_hailort_hailo8l_1 \
   --fifo /tmp/cam.yuv \
   --db /home/pinky/hailo_examples/assets/.face_db \
-  --thresh 0.40 --smooth 7 --min-face 80 --det-every 1
+  --thresh 0.40 --smooth 7 --det-every 1 --min-face 110 \
+  --margin 15 --unknown-time 3.0 --reset-time 5.0
   
 ##인자별 설명
 --zoo /home/pinky/hailo_examples/models
