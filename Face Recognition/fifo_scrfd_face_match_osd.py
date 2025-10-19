@@ -7,11 +7,79 @@ FIFO(YUV420) -> SCRFD(det + 5pts, DeGirum@local) -> ArcFace(112, DeGirum@local)
 - 터미널 B: python3 fifo_scrfd_face_match_osd.py --zoo ... --fifo /tmp/cam.yuv ...
 """
 import os, sys, time, argparse, signal
+sys.path.append("/home/pinky/hailo_examples/openpath-CANINE-middleware/python_scripts")
 import numpy as np
+import rclpy
+from rosCommunication import ROSCommunication
 import cv2
 import lancedb
 from collections import deque, Counter
 import degirum as dg
+from canineStruct import Command
+from sharedMemory import SharedMemoryManager
+import threading
+import subprocess
+
+def rosCommunicationThread(shm, args=None):
+    rclpy.init(args=args)
+    node = ROSCommunication(shm)
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+_seq_running = False
+_seq_lock = threading.Lock()
+
+def _send_dwa_noinput_sequence(shm, tag="SEQ"):
+    """비차단: DWA -> 3s -> NO_INPUT -> 3s 시퀀스 1회 발사"""
+    global _seq_running
+    with _seq_lock:
+        if _seq_running:
+            print(f"[FACE] {tag}: sequence already running, skip")
+            return
+        _seq_running = True
+
+    def _worker():
+        global _seq_running
+        try:
+            print(f"[FACE] {tag}: send DWA")
+            shm.cmd.command = Command.DWA.value
+            time.sleep(2.0)
+
+            print(f"[FACE] {tag}: send NO_INPUT")
+            shm.cmd.command = Command.NO_INPUT.value
+            time.sleep(2.0)
+
+            print(f"[FACE] {tag}: sequence done")
+        finally:
+            with _seq_lock:
+                _seq_running = False
+
+    threading.Thread(target=_worker, daemon=True).start()
+    
+#경고음 재생
+_alarm_proc = None
+def start_alarm(path):
+    """경고음 재생 시작 (이미 재생 중이면 무시)"""
+    global _alarm_proc
+    if _alarm_proc and _alarm_proc.poll() is None:
+        return
+    # aplay 고정 (WAV 권장). MP3 쓰면 mpg123로 교체 가능.
+    _alarm_proc = subprocess.Popen(["mpg123", "-q", path])
+
+def stop_alarm():
+    """경고음 중지 (재생 중일 때만)"""
+    global _alarm_proc
+    if _alarm_proc and _alarm_proc.poll() is None:
+        try:
+            _alarm_proc.terminate()
+        except Exception:
+            pass
+    _alarm_proc = None
 
 # ---------- 기본값 ----------
 ARC_REF_5PTS = np.array([
@@ -118,7 +186,20 @@ def main():
     ap.add_argument("--margin", type=int, default=40, help="pixels from border regarded as edge zone")               # [ADDED]
     ap.add_argument("--unknown-time", type=float, default=3.0, help="seconds for unknown dwell to trigger alert")    # [ADDED]
     ap.add_argument("--reset-time", type=float, default=2.0, help="seconds after no unknown-in-margin to reset")     # [ADDED]
+    ap.add_argument("--ros-wait", type=float, default=8.0, help="seconds to wait middleware_connected")              # [ADD]
+    ap.add_argument("--no-clear", action="store_true", help="do not send NO_INPUT on alert clear")
+    # 벨 울리기
+    ap.add_argument("--alarm-file", required=True, help="경고음 파일 경로 (예: /home/pinky/hailo_examples/assets/alarm.wav)")
     args = ap.parse_args()
+    
+    shm = SharedMemoryManager()
+    
+    threading.Thread(target=rosCommunicationThread, args=(shm,), daemon=True).start()
+    
+    t0 = time.time()
+    while not shm.middleware_connected and (time.time() - t0) < args.ros_wait:
+        time.sleep(0.2)
+    print(f"[FACE] middleware_connected={shm.middleware_connected}  (waited {time.time()-t0:.1f}s)")
 
     # DeGirum models (@local)
     det = dg.load_model(args.det, "@local", args.zoo, "", overlay_color=(0,255,0))
@@ -152,9 +233,15 @@ def main():
     unknown_timer = {}   # tid -> {"start":float or None, "last":float}                              # [ADDED]
     alert_active = False                                                                     # [ADDED]
     last_unknown_in_margin_time = 0.0                                                        # [ADDED]
+    prev_alert = False
+    last_send_ts = 0.0   
+    MIN_SEND_INTERVAL = 1.0   
+    last_sent_cmd = None
 
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-
+    prev_mw = None           # 이전 middleware_connected
+    prev_alert_state = None  # 이전 alert_active
+    
     while True:
         raw = read_exact(f, frame_size)
         if raw is None: break
@@ -223,11 +310,11 @@ def main():
             t["label"], t["avg"], t["last_seen"] = label, avg, time.time()
 
             # [ADDED] ─────────────────────────────────────────────────────────
-            # 외부인(unknown) 체류 감지: 프레임 경계 margin 내에 unknown이 일정 시간 이상 머무르면 alert
+            # 외부인(unknown) 체류 감지: 프레임 경계 사각형 내에 unknown이 일정 시간 이상 머무르면 alert
             x,y,w,h = t["x"], t["y"], t["w"], t["h"]
-            in_margin = (x <= args.margin or y <= args.margin or
-                         (x+w) >= (args.w - args.margin) or
-                         (y+h) >= (args.h - args.margin))
+            in_margin = (x >= args.margin and y >= args.margin and
+                         (x+w) <= (args.w - args.margin) and
+                         (y+h) <= (args.h - args.margin))
             is_unknown = (t["label"] == "unknown")
 
             if is_unknown and in_margin:
@@ -253,6 +340,26 @@ def main():
             if alert_active and (now - last_unknown_in_margin_time) >= args.reset_time:
                 alert_active = False
                 unknown_timer.clear()
+        # ─────────────────────────────────────────────────────────
+        
+        mw_now = bool(shm.middleware_connected)
+        alert_now = bool(alert_active)
+
+        # 알람 '변화' 먼저 체크
+        if mw_now and (prev_alert_state is not None) and (alert_now != prev_alert_state):
+            if alert_now:
+                #경보음 울리기
+                start_alarm(args.alarm_file)
+                _send_dwa_noinput_sequence(shm, tag="ALERT_ON")
+            else:
+                stop_alarm()
+                _send_dwa_noinput_sequence(shm, tag="ALERT_OFF")
+
+        # 그 다음에 상태 로그 + 상태 저장
+        if (mw_now != prev_mw) or (alert_now != prev_alert_state):
+            print(f"[FACE] middleware_connected={mw_now}  alert={alert_now}")
+        prev_mw = mw_now
+        prev_alert_state = alert_now
 
         # ── OSD & FPS ────────────────────────────────────────────────────────
         frames += 1
@@ -288,7 +395,15 @@ def main():
         head = f"{args.w}x{args.h} FPS~{disp_fps:.1f}"
         # [ADDED] alert state 출력
         head2 = f"  |  value={1 if alert_active else 0}  (unk>= {args.unknown_time:.1f}s in margin, reset {args.reset_time:.1f}s)"
-        cv2.putText(canvas, head + head2, (18, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+        # [ADD] 현재 전송 상태(연결/보낸 명령 최근 시각) 간단 표시
+        cmd_hint = ""
+        try:
+            cur_cmd = getattr(shm.cmd, "command", None)
+            if cur_cmd is not None:
+                cmd_hint = f"  |  CMD={Command(cur_cmd).name}"
+        except Exception:
+            pass
+        cv2.putText(canvas, head + head2 + cmd_hint, (18, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
                     (0,255,255) if not alert_active else (0,128,255), 2, cv2.LINE_AA)
 
         cv2.imshow("LIVE (FIFO + SCRFD + ArcFace)", canvas)
